@@ -1,0 +1,1 @@
+(function(){var t,e=window,p=document,a=e.partytown||{},n=p.createElement("script");e._ptf=[],(a.forward||[]).map((p=>{t=e,p.split(".").map(((a,n,r)=>{t=t[a]=n<r.length-1?t[a]||{}:function(){e._ptf.push(p,arguments)}}))})),n.async=n.defer=!0,n.src="/~partytown/partytown."+(a.debug?"debug.js":"js"),p.head.appendChild(n)})();
