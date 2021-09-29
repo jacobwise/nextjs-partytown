@@ -1,13 +1,14 @@
 import { Partytown, GoogleTagManager, GoogleTagManagerNoScript } from '@builder.io/partytown/react';
 import Document, { Html, Head, Main, NextScript } from 'next/document';
+import { GTM_ID } from '../lib/gtm'
 
 class MyDocument extends Document {
   render() {
     return (
       <Html>
         <Head>
-          <GoogleTagManager containerId={'GTM-KNZPMFF'} />
-          <Partytown />
+          <GoogleTagManager containerId={GTM_ID} />
+          <Partytown debug={true} forward={['dataLayer.push']} />
           <link
             rel="preconnect"
             href="https://fonts.gstatic.com"
@@ -26,7 +27,7 @@ class MyDocument extends Document {
           />
         </Head>
         <body>
-          <GoogleTagManagerNoScript containerId={'GTM-KNZPMFF'} />
+          <GoogleTagManagerNoScript containerId={GTM_ID} />
           <Main />
           <NextScript />
         </body>
