@@ -1,4 +1,3 @@
-import { Partytown, GoogleTagManager, GoogleTagManagerNoScript } from '@builder.io/partytown/react';
 import Document, { Html, Head, Main, NextScript } from 'next/document';
 
 class MyDocument extends Document {
@@ -6,8 +5,6 @@ class MyDocument extends Document {
     return (
       <Html>
         <Head>
-          <GoogleTagManager containerId={'GTM-KNZPMFF'} />
-          <Partytown />
           <link
             rel="preconnect"
             href="https://fonts.gstatic.com"
@@ -26,7 +23,6 @@ class MyDocument extends Document {
           />
         </Head>
         <body>
-          <GoogleTagManagerNoScript containerId={'GTM-KNZPMFF'} />
           <Main />
           <NextScript />
         </body>
