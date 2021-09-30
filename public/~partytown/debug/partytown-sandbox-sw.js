@@ -3,8 +3,9 @@
     const len = obj => obj.length;
     const getConstructorName = obj => obj && obj.constructor && obj.constructor.name || "";
     const startsWith = (str, val) => str.startsWith(val);
-    const isValidMemberName = memberName => !(startsWith(memberName, "webkit") || startsWith(memberName, "toJSON") || startsWith(memberName, "on") && (str => str.toLowerCase())(memberName) === memberName);
+    const isValidMemberName = memberName => !startsWith(memberName, "webkit") && !startsWith(memberName, "toJSON") && (!startsWith(memberName, "on") || (str => str.toLowerCase())(memberName) !== memberName);
     const EMPTY_ARRAY = [];
+    const TOP_WIN_ID = 1;
     const forwardMsgResolves = new Map;
     const mainInstanceIdByInstance = new WeakMap;
     const mainInstances = [];
@@ -71,7 +72,7 @@
     const serializeForWorker = (winCtx, value, added, type, obj, key) => {
         if (void 0 !== value) {
             added = added || new Set;
-            if ("string" == (type = typeof value) || "number" === type || "boolean" === type || null == value) {
+            if ("string" === (type = typeof value) || "number" === type || "boolean" === type || null == value) {
                 return [ 4, value ];
             }
             if ("function" === type) {
@@ -176,28 +177,28 @@
             winCtx.$worker$.postMessage([ 3, scriptData ]);
         } else if (!winCtx.$isInitialized$) {
             winCtx.$isInitialized$ = !0;
-            win.frameElement && (win.frameElement.partyWinId = $winId$);
+            win.frameElement && (win.frameElement._ptId = $winId$);
             ((winCtx, win) => {
-                let forwardedTriggers = win._ptf;
+                let existingTriggers = win._ptf;
+                let forwardTriggers = win._ptf = [];
                 let i = 0;
-                if (forwardedTriggers) {
-                    win._ptf.push = ($config$, $args$) => winCtx.$worker$.postMessage([ 7, {
-                        $winId$: winCtx.$winId$,
-                        $instanceId$: 0,
-                        $config$: $config$,
-                        $args$: serializeForWorker(winCtx, Array.from($args$))
-                    } ]);
-                    for (;i < len(forwardedTriggers); i += 2) {
-                        win._ptf.push(forwardedTriggers[i], forwardedTriggers[i + 1]);
+                forwardTriggers.push = ($forward$, $args$) => winCtx.$worker$.postMessage([ 7, {
+                    $winId$: winCtx.$winId$,
+                    $instanceId$: 0,
+                    $forward$: $forward$,
+                    $args$: serializeForWorker(winCtx, Array.from($args$))
+                } ]);
+                if (existingTriggers) {
+                    for (;i < len(existingTriggers); i += 2) {
+                        forwardTriggers.push(existingTriggers[i], existingTriggers[i + 1]);
                     }
-                    forwardedTriggers.length = 0;
                 }
             })(winCtx, win);
             doc.dispatchEvent(new CustomEvent("ptinit"));
             ((winCtx, msg) => {
                 {
                     let prefix;
-                    prefix = 1 === winCtx.$winId$ ? `Main (${winCtx.$winId$}) 🌎` : `Iframe (${winCtx.$winId$}) 👾`;
+                    prefix = winCtx.$winId$ === TOP_WIN_ID ? `Main (${winCtx.$winId$}) 🌎` : `Iframe (${winCtx.$winId$}) 👾`;
                     console.debug.apply(console, [ `%c${prefix}`, "background: #717171; color: white; padding: 2px 3px; border-radius: 2px; font-size: 0.8em;", msg ]);
                 }
             })(winCtx, `Startup ${(performance.now() - winCtx.$startTime$).toFixed(1)}ms`);
@@ -229,97 +230,134 @@
         NamedNodeMap: 4,
         NodeList: 7
     };
+    const onMessageFromWebWorker = (winCtx, msg) => {
+        const msgType = msg[0];
+        const doc = winCtx.$window$.document;
+        if (0 === msgType) {
+            const firstScriptId = getAndSetInstanceId(winCtx, doc.querySelector("script"));
+            const mainInterfaces = ((win, doc) => {
+                const docImpl = doc.implementation.createHTMLDocument();
+                const docElement = docImpl.documentElement;
+                return [ [ 0, win ], [ 9, docImpl ], [ 6, docElement.classList ], [ 1, docElement ], [ 8, win.history ], [ 7, docElement.childNodes ], [ 10, win.sessionStorage ], [ 3, docImpl.createTextNode("") ] ].map((([interfaceType, impl]) => [ interfaceType, readImplementationMembers(impl, {}) ]));
+            })(winCtx.$window$, doc);
+            const initWebWorkerData = {
+                $winId$: winCtx.$winId$,
+                $parentWinId$: winCtx.$parentWinId$,
+                $config$: winCtx.$config$ || {},
+                $documentCompatMode$: doc.compatMode,
+                $documentCookie$: doc.cookie,
+                $documentReadyState$: doc.readyState,
+                $documentReferrer$: doc.referrer,
+                $documentTitle$: doc.title,
+                $firstScriptId$: firstScriptId,
+                $interfaces$: mainInterfaces,
+                $libPath$: new URL(winCtx.$libPath$, winCtx.$url$) + "",
+                $url$: winCtx.$url$
+            };
+            winCtx.$worker$.postMessage([ 1, initWebWorkerData ]);
+        } else if (3 === msgType) {
+            readNextScript(winCtx);
+        } else if (2 === msgType) {
+            ((winCtx, doc, instanceId, errorMsg, script) => {
+                (script = doc.querySelector('[data-pt-id="' + winCtx.$winId$ + "." + instanceId + '"]')) && (errorMsg ? script.dataset.ptError = errorMsg : script.type += "-init");
+                readNextScript(winCtx);
+            })(winCtx, doc, msg[1], msg[2]);
+        } else if (6 === msgType) {
+            const accessRsp = msg[1];
+            const forwardMsgResolve = forwardMsgResolves.get(accessRsp.$msgId$);
+            if (forwardMsgResolve) {
+                forwardMsgResolves.delete(accessRsp.$msgId$);
+                forwardMsgResolve(accessRsp);
+                readNextScript(winCtx);
+            }
+        } else {
+            8 === msgType && winCtxs.forEach((winCtx => winCtx.$worker$.postMessage(msg)));
+        }
+    };
+    const mainAccessHandler = async (winCtx, accessReq) => {
+        const accessRsp = {
+            $msgId$: accessReq.$msgId$,
+            $winId$: accessReq.$winId$,
+            $errors$: []
+        };
+        for (const accessReqTask of accessReq.$tasks$) {
+            let instanceId = accessReqTask.$instanceId$;
+            let accessType = accessReqTask.$accessType$;
+            let memberPath = accessReqTask.$memberPath$;
+            let memberPathLength = len(memberPath);
+            let lastMemberName = memberPath[memberPathLength - 1];
+            let immediateSetters = accessReqTask.$immediateSetters$ || EMPTY_ARRAY;
+            let instance;
+            let rtnValue;
+            let data;
+            let i;
+            let count;
+            let tmr;
+            let immediateSetterName;
+            try {
+                data = deserializeFromWorker(accessReqTask.$data$);
+                if (accessReq.$forwardToWorkerAccess$) {
+                    continue;
+                }
+                instance = getInstance(accessRsp.$winId$, instanceId);
+                if (instance) {
+                    for (i = 0; i < memberPathLength - 1; i++) {
+                        instance = instance[memberPath[i]];
+                    }
+                    if (0 === accessType) {
+                        "_ptId" === lastMemberName && await new Promise((resolve => {
+                            count = 0;
+                            tmr = setInterval((() => {
+                                if (isMemberInInstance(instance, memberPath) || count > 99) {
+                                    clearInterval(tmr);
+                                    resolve();
+                                }
+                                count++;
+                            }), 40);
+                        }));
+                        rtnValue = instance[lastMemberName];
+                    } else if (1 === accessType) {
+                        instance[lastMemberName] = data;
+                    } else if (2 === accessType) {
+                        rtnValue = instance[lastMemberName].apply(instance, data);
+                        immediateSetters.map((immediateSetter => {
+                            immediateSetterName = immediateSetter[0][0];
+                            rtnValue[immediateSetterName] = deserializeFromWorker(immediateSetter[1]);
+                        }));
+                        accessReqTask.$newInstanceId$ && setInstanceId(winCtx, rtnValue, accessReqTask.$newInstanceId$);
+                    }
+                    if (isPromise(rtnValue)) {
+                        rtnValue = await rtnValue;
+                        accessRsp.$isPromise$ = !0;
+                    }
+                    accessRsp.$rtnValue$ = serializeForWorker(winCtx, rtnValue);
+                } else {
+                    accessRsp.$errors$.push(`Instance ${instanceId} not found`);
+                }
+            } catch (e) {
+                accessRsp.$errors$.push(String(e.stack || e));
+            }
+        }
+        return accessReq.$forwardToWorkerAccess$ ? ((worker, accessReq) => new Promise((resolve => {
+            forwardMsgResolves.set(accessReq.$msgId$, resolve);
+            worker.postMessage([ 5, accessReq ]);
+        })))(winCtx.$worker$, accessReq) : accessRsp;
+    };
     const isMemberInInstance = (instance, memberPath) => memberPath[0] in instance;
     (async (sandboxWindow, winIds) => {
         const mainWindow = sandboxWindow.parent;
-        const swContainer = sandboxWindow.navigator.serviceWorker;
-        const swRegistration = await swContainer.getRegistration();
-        const onMessageFromServiceWorkerToSandbox = ev => {
-            const accessReq = ev.data;
-            const accessWinId = accessReq.$winId$;
-            const winCtx = winCtxs.get(accessWinId);
-            winCtx && (async (winCtx, accessReq) => {
-                const accessRsp = {
-                    $msgId$: accessReq.$msgId$,
-                    $winId$: accessReq.$winId$,
-                    $errors$: []
-                };
-                for (const accessReqTask of accessReq.$tasks$) {
-                    let instanceId = accessReqTask.$instanceId$;
-                    let accessType = accessReqTask.$accessType$;
-                    let memberPath = accessReqTask.$memberPath$;
-                    let memberPathLength = len(memberPath);
-                    let lastMemberName = memberPath[memberPathLength - 1];
-                    let immediateSetters = accessReqTask.$immediateSetters$ || EMPTY_ARRAY;
-                    let instance;
-                    let rtnValue;
-                    let data;
-                    let i;
-                    let count;
-                    let tmr;
-                    let immediateSetterName;
-                    try {
-                        data = deserializeFromWorker(accessReqTask.$data$);
-                        if (accessReq.$forwardToWorkerAccess$) {
-                            continue;
-                        }
-                        instance = getInstance(accessRsp.$winId$, instanceId);
-                        if (instance) {
-                            for (i = 0; i < memberPathLength - 1; i++) {
-                                instance = instance[memberPath[i]];
-                            }
-                            if (0 === accessType) {
-                                "partyWinId" === lastMemberName && await new Promise((resolve => {
-                                    count = 0;
-                                    tmr = setInterval((() => {
-                                        if (isMemberInInstance(instance, memberPath) || count > 99) {
-                                            clearInterval(tmr);
-                                            resolve();
-                                        }
-                                        count++;
-                                    }), 40);
-                                }));
-                                rtnValue = instance[lastMemberName];
-                            } else if (1 === accessType) {
-                                instance[lastMemberName] = data;
-                            } else if (2 === accessType) {
-                                rtnValue = instance[lastMemberName].apply(instance, data);
-                                immediateSetters.map((immediateSetter => {
-                                    immediateSetterName = immediateSetter[0][0];
-                                    rtnValue[immediateSetterName] = deserializeFromWorker(immediateSetter[1]);
-                                }));
-                                accessReqTask.$newInstanceId$ && setInstanceId(winCtx, rtnValue, accessReqTask.$newInstanceId$);
-                            }
-                            if (isPromise(rtnValue)) {
-                                rtnValue = await rtnValue;
-                                accessRsp.$isPromise$ = !0;
-                            }
-                            accessRsp.$rtnValue$ = serializeForWorker(winCtx, rtnValue);
-                        } else {
-                            accessRsp.$errors$.push(`Instance ${instanceId} not found`);
-                        }
-                    } catch (e) {
-                        accessRsp.$errors$.push(String(e.stack || e));
-                    }
-                }
-                return accessReq.$forwardToWorkerAccess$ ? ((worker, accessReq) => new Promise((resolve => {
-                    forwardMsgResolves.set(accessReq.$msgId$, resolve);
-                    worker.postMessage([ 5, accessReq ]);
-                })))(winCtx.$worker$, accessReq) : accessRsp;
-            })(winCtx, accessReq).then((accessRsp => {
-                swRegistration && swRegistration.active && swRegistration.active.postMessage(accessRsp);
-            }));
-        };
+        const $config$ = mainWindow.partytown || {};
+        const $libPath$ = $config$.lib || "/~partytown/";
         const registerWindow = win => {
             if (!windows.has(win)) {
                 windows.add(win);
                 const parentWin = win.parent;
                 const winCtx = {
-                    $winId$: win.partyWinId = winIds++,
-                    $parentWinId$: parentWin.partyWinId,
-                    $config$: mainWindow.partytown,
+                    $winId$: win._ptId = winIds++,
+                    $parentWinId$: parentWin._ptId,
                     $cleanupInc$: 0,
-                    $scopePath$: swRegistration.scope,
+                    $config$: $config$,
+                    $libPath$: $libPath$,
                     $url$: win.document.baseURI,
                     $window$: win
                 };
@@ -329,60 +367,28 @@
                 setInstanceId(winCtx, win.history, 1);
                 setInstanceId(winCtx, win.localStorage, 2);
                 setInstanceId(winCtx, win.sessionStorage, 3);
-                swContainer.addEventListener("message", onMessageFromServiceWorkerToSandbox);
                 (winCtx => {
-                    winCtx.$worker$ = new Worker("./partytown-ww.debug.js", {
+                    winCtx.$worker$ = new Worker("./partytown-ww-sw.js", {
                         name: `Partytown (${winCtx.$winId$}) 🎉`
                     });
-                    winCtx.$worker$.onmessage = ev => ((winCtx, msg) => {
-                        const msgType = msg[0];
-                        const doc = winCtx.$window$.document;
-                        if (0 === msgType) {
-                            const firstScriptId = getAndSetInstanceId(winCtx, doc.querySelector("script"));
-                            const mainInterfaces = ((win, doc) => {
-                                const docImpl = doc.implementation.createHTMLDocument();
-                                const docElement = docImpl.documentElement;
-                                return [ [ 0, win ], [ 9, docImpl ], [ 6, docElement.classList ], [ 1, docElement ], [ 8, win.history ], [ 7, docElement.childNodes ], [ 10, win.sessionStorage ], [ 3, docImpl.createTextNode("") ] ].map((([interfaceType, impl]) => [ interfaceType, readImplementationMembers(impl, {}) ]));
-                            })(winCtx.$window$, doc);
-                            const initWebWorkerData = {
-                                $winId$: winCtx.$winId$,
-                                $parentWinId$: winCtx.$parentWinId$,
-                                $config$: winCtx.$config$ || {},
-                                $documentCompatMode$: doc.compatMode,
-                                $documentCookie$: doc.cookie,
-                                $documentReadyState$: doc.readyState,
-                                $documentReferrer$: doc.referrer,
-                                $documentTitle$: doc.title,
-                                $firstScriptId$: firstScriptId,
-                                $interfaces$: mainInterfaces,
-                                $scopePath$: winCtx.$scopePath$,
-                                $url$: winCtx.$url$
-                            };
-                            winCtx.$worker$.postMessage([ 1, initWebWorkerData ]);
-                        } else if (3 === msgType) {
-                            readNextScript(winCtx);
-                        } else if (2 === msgType) {
-                            ((winCtx, doc, instanceId, errorMsg, script) => {
-                                (script = doc.querySelector('[data-pt-id="' + winCtx.$winId$ + "." + instanceId + '"]')) && (errorMsg ? script.dataset.ptError = errorMsg : script.type += "-init");
-                                readNextScript(winCtx);
-                            })(winCtx, doc, msg[1], msg[2]);
-                        } else if (6 === msgType) {
-                            const accessRsp = msg[1];
-                            const forwardMsgResolve = forwardMsgResolves.get(accessRsp.$msgId$);
-                            if (forwardMsgResolve) {
-                                forwardMsgResolves.delete(accessRsp.$msgId$);
-                                forwardMsgResolve(accessRsp);
-                                readNextScript(winCtx);
-                            }
-                        } else {
-                            8 === msgType && winCtxs.forEach((winCtx => winCtx.$worker$.postMessage(msg)));
-                        }
-                    })(winCtx, ev.data);
+                    winCtx.$worker$.onmessage = ev => onMessageFromWebWorker(winCtx, ev.data);
                 })(winCtx);
                 win.addEventListener("load", (() => readNextScript(winCtx)));
             }
         };
-        mainWindow.partyWin = registerWindow;
-        swRegistration && registerWindow(mainWindow);
-    })(window, 1);
+        mainWindow._ptWin = registerWindow;
+        await (async (sandboxWindow, receiveMessage) => {
+            const swContainer = sandboxWindow.navigator.serviceWorker;
+            const swRegistration = await swContainer.getRegistration();
+            const sendMessageToWorker = accessRsp => {
+                swRegistration && swRegistration.active && swRegistration.active.postMessage(accessRsp);
+            };
+            swContainer.addEventListener("message", (ev => receiveMessage(ev.data, sendMessageToWorker)));
+            return !!swRegistration;
+        })(sandboxWindow, ((accessReq, responseCallback) => {
+            const accessWinId = accessReq.$winId$;
+            const winCtx = winCtxs.get(accessWinId);
+            mainAccessHandler(winCtx, accessReq).then(responseCallback);
+        })) && registerWindow(mainWindow);
+    })(window, TOP_WIN_ID);
 })(window);

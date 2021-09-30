@@ -70,7 +70,6 @@
     const len = obj => obj.length;
     const nextTick = (cb, ms) => setTimeout(cb, ms);
     const EMPTY_ARRAY = [];
-    const PT_SCRIPT = '<script src="/~partytown/partytown.debug.js" async defer><\/script>';
     const randomId = () => Math.round(9999999999 * Math.random() + 7);
     const getInstanceStateValue = (instance, stateKey) => getStateValue(instance[InstanceIdKey], stateKey);
     const getStateValue = (instanceId, stateKey, stateRecord) => (stateRecord = webWorkerState[instanceId]) ? stateRecord[stateKey] : void 0;
@@ -98,6 +97,7 @@
     };
     const resolveUrl = url => new URL(url || "", webWorkerCtx.$location$ + "");
     const getUrl = elm => resolveUrl(getInstanceStateValue(elm, "href"));
+    const getPartytownScript = () => `<script src=${JSON.stringify(webWorkerCtx.$libPath$ + "partytown.js")} async defer><\/script>`;
     const sendBeacon = (url, data) => {
         if (webWorkerCtx.$config$.logSendBeaconRequests) {
             try {
@@ -264,7 +264,7 @@
             let win;
             let winId = getInstanceStateValue(this, 2);
             if (!winId) {
-                winId = getter(this, [ "partyWinId" ]);
+                winId = getter(this, [ "_ptId" ]);
                 setInstanceStateValue(this, 2, winId);
             }
             win = new WorkerContentWindow(0, 0, winId);
@@ -286,7 +286,7 @@
                 isSuccessfulLoad = xhr.status > 199 && xhr.status < 300;
                 setInstanceStateValue(this, 1, isSuccessfulLoad);
                 if (isSuccessfulLoad) {
-                    iframeContent = ((url, html) => `<base href="${url}">` + html.replace(/<script>/g, '<script type="text/partytown">').replace(/<script /g, '<script type="text/partytown" ').replace(/text\/javascript/g, "text/partytown") + PT_SCRIPT)(url, xhr.responseText);
+                    iframeContent = ((url, html) => `<base href="${url}">` + html.replace(/<script>/g, '<script type="text/partytown">').replace(/<script /g, '<script type="text/partytown" ').replace(/text\/javascript/g, "text/partytown") + getPartytownScript())(url, xhr.responseText);
                     this[ImmediateSettersKey] ? this[ImmediateSettersKey].push([ [ "srcdoc" ], serializeForMain(this[WinIdKey], this[InstanceIdKey], iframeContent) ]) : setter(this, [ "srcdoc" ], iframeContent);
                 }
             }
@@ -336,7 +336,7 @@
             const winId = this[WinIdKey];
             const instanceId = randomId();
             const elm = new (getElementConstructor(tagName))(1, instanceId, winId, tagName);
-            elm[ImmediateSettersKey] = "SCRIPT" === tagName ? [ [ [ "type" ], serializeForMain(winId, instanceId, "text/partytown") ] ] : "IFRAME" === tagName ? [ [ [ "srcdoc" ], serializeForMain(winId, instanceId, PT_SCRIPT) ] ] : [];
+            elm[ImmediateSettersKey] = "SCRIPT" === tagName ? [ [ [ "type" ], serializeForMain(winId, instanceId, "text/partytown") ] ] : "IFRAME" === tagName ? [ [ [ "srcdoc" ], serializeForMain(winId, instanceId, getPartytownScript()) ] ] : [];
             return elm;
         }
         get createEventObject() {}
@@ -446,23 +446,25 @@
     };
     const drainQueue = ($winId$, $instanceId$, $memberPath$, $forwardToWorkerAccess$, queue) => {
         if (len(queue)) {
-            const xhr = new XMLHttpRequest;
             const accessReq = {
                 $msgId$: randomId(),
                 $winId$: $winId$,
                 $forwardToWorkerAccess$: $forwardToWorkerAccess$,
                 $tasks$: [ ...queue ]
             };
-            const accessReqStr = JSON.stringify(accessReq);
-            queue.length = 0;
-            xhr.open("POST", webWorkerCtx.$scopePath$ + "proxytown", !1);
-            xhr.send(JSON.stringify(accessReq));
-            const accessRsp = JSON.parse(xhr.responseText);
+            const accessRsp = ((webWorkerCtx, accessReq) => {
+                const xhr = new XMLHttpRequest;
+                const url = webWorkerCtx.$libPath$ + "proxytown";
+                xhr.open("POST", url, !1);
+                xhr.send(JSON.stringify(accessReq));
+                return JSON.parse(xhr.responseText);
+            })(webWorkerCtx, accessReq);
             const errors = accessRsp.$errors$.join();
             const isPromise = accessRsp.$isPromise$;
             const rtn = deserializeFromMain($winId$, $instanceId$, $memberPath$, accessRsp.$rtnValue$);
+            queue.length = 0;
             if (errors) {
-                console.error(self.name, accessReqStr);
+                console.error(self.name, JSON.stringify(accessReq));
                 if (isPromise) {
                     return Promise.reject(errors);
                 }
@@ -520,7 +522,7 @@
                 return Reflect.get(target, propKey);
             }
             const memberPath = [ ...initMemberPath, String(propKey) ];
-            return ((interfaceType, instance, memberPath) => {
+            const complexProp = ((interfaceType, instance, memberPath) => {
                 const interfaceInfo = webWorkerCtx.$interfaces$.find((i => i[0] === interfaceType));
                 if (interfaceInfo) {
                     const memberInfo = interfaceInfo[1][memberPath[len(memberPath) - 1]];
@@ -535,7 +537,8 @@
                 if ("function" == typeof stateValue) {
                     return (...args) => stateValue.apply(instance, args);
                 }
-            })(interfaceType, target, memberPath) || getter(target, memberPath);
+            })(interfaceType, target, memberPath);
+            return complexProp || getter(target, memberPath);
         },
         set(target, propKey, value, receiver) {
             Reflect.has(target, propKey) ? Reflect.set(target, propKey, value, receiver) : setter(target, [ ...initMemberPath, String(propKey) ], value);
@@ -607,6 +610,17 @@
         }
     };
     const constructSerializedInstance = ({$interfaceType$: $interfaceType$, $instanceId$: $instanceId$, $winId$: $winId$, $nodeName$: $nodeName$, $items$: $items$}) => 1 === $instanceId$ ? history : 2 === $instanceId$ ? localStorage : 3 === $instanceId$ ? sessionStorage : 0 === $instanceId$ ? self : 7 === $interfaceType$ ? new WorkerNodeList($items$.map(constructSerializedInstance)) : constructInstance($interfaceType$, $instanceId$, $winId$, $nodeName$);
+    const callWorkerRefHandler = ({$winId$: $winId$, $instanceId$: $instanceId$, $refId$: $refId$, $thisArg$: $thisArg$, $args$: $args$}, workerRef) => {
+        if (workerRef = (refId => webWorkerRefsByRefId[refId])($refId$)) {
+            try {
+                const thisArg = deserializeFromMain($winId$, $instanceId$, [], $thisArg$);
+                const args = deserializeFromMain($winId$, $instanceId$, [], $args$);
+                workerRef.apply(thisArg, args);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+    };
     const deserializeRefFromMain = (instanceId, memberPath, {$winId$: $winId$, $refId$: $refId$}) => {
         let workerRefHandler;
         let workerRefMap = getStateValue(instanceId, 0);
@@ -659,6 +673,42 @@
             this.e = [ cb ];
         }
     }
+    const initWebWorker = (self, initWebWorkerData) => {
+        Object.assign(webWorkerCtx, initWebWorkerData);
+        logWorker(`Loaded web worker, winId: ${webWorkerCtx.$winId$}${webWorkerCtx.$winId$ > 1 ? ", parentId: " + webWorkerCtx.$parentWinId$ : ""}`);
+        webWorkerCtx.$importScripts$ = importScripts.bind(self);
+        self.importScripts = void 0;
+        webWorkerCtx.$postMessage$ = postMessage.bind(self);
+        self.postMessage = (msg, targetOrigin) => logWorker(`postMessage(${JSON.stringify(msg)}, "${targetOrigin}"})`);
+        webWorkerCtx.$location$ = new WorkerLocation(initWebWorkerData.$url$);
+        ((self, windowMemberTypeInfo) => {
+            self[WinIdKey] = webWorkerCtx.$winId$;
+            self[InstanceIdKey] = 0;
+            Object.keys(windowMemberTypeInfo).forEach((memberName => {
+                self[memberName] || 2 !== windowMemberTypeInfo[memberName] || (self[memberName] = (...args) => callMethod(self, [ memberName ], args));
+            }));
+            self.requestAnimationFrame = cb => nextTick((() => cb(Date.now())), 9);
+            self.cancelAnimationFrame = clearTimeout;
+            Object.defineProperty(self, "location", {
+                get: () => webWorkerCtx.$location$,
+                set: href => webWorkerCtx.$location$.href = href + ""
+            });
+            self.document = constructInstance(9, 4);
+            self.history = constructInstance(8, 1);
+            self.localStorage = constructInstance(10, 2);
+            self.sessionStorage = constructInstance(10, 3);
+            self.Image = Image;
+            navigator.sendBeacon = sendBeacon;
+            self.self = self.window = self;
+            if (1 === webWorkerCtx.$winId$) {
+                self.parent = self.top = self;
+            } else {
+                self.parent = constructInstance(0, 0, webWorkerCtx.$parentWinId$);
+                self.top = constructInstance(0, 0, 1);
+            }
+        })(self, initWebWorkerData.$interfaces$[0][1]);
+        webWorkerCtx.$isInitialized$ = !0;
+    };
     const queuedEvents = [];
     const receiveMessageFromSandboxToWorker = ev => {
         const msg = ev.data;
@@ -700,17 +750,7 @@
                 }
                 setCurrentScript(-1, "");
                 webWorkerCtx.$postMessage$([ 2, instanceId, errorMsg ]);
-            })(msgData1) : 4 === msgType ? (({$winId$: $winId$, $instanceId$: $instanceId$, $refId$: $refId$, $thisArg$: $thisArg$, $args$: $args$}, workerRef) => {
-                if (workerRef = (refId => webWorkerRefsByRefId[refId])($refId$)) {
-                    try {
-                        const thisArg = deserializeFromMain($winId$, $instanceId$, [], $thisArg$);
-                        const args = deserializeFromMain($winId$, $instanceId$, [], $args$);
-                        workerRef.apply(thisArg, args);
-                    } catch (e) {
-                        console.error(e);
-                    }
-                }
-            })(msgData1) : 5 === msgType ? (accessReq => {
+            })(msgData1) : 4 === msgType ? callWorkerRefHandler(msgData1) : 5 === msgType ? (accessReq => {
                 const $winId$ = accessReq.$winId$;
                 const accessRsp = {
                     $msgId$: accessReq.$msgId$,
@@ -743,54 +783,18 @@
                     }
                 }
                 webWorkerCtx.$postMessage$([ 6, accessRsp ]);
-            })(msgData1) : 7 === msgType ? (({$winId$: $winId$, $instanceId$: $instanceId$, $args$: $args$, $config$: $config$}) => {
+            })(msgData1) : 7 === msgType ? (({$winId$: $winId$, $instanceId$: $instanceId$, $forward$: $forward$, $args$: $args$}) => {
                 let args = deserializeFromMain($winId$, $instanceId$, [], $args$);
                 let target = self;
-                let fn;
-                $config$.split(".").forEach(((forwardProp, index, arr) => {
-                    if (target) {
-                        fn = target[forwardProp];
-                        index === arr.length - 1 && "function" == typeof fn ? fn.apply(target, args) : target = target[forwardProp];
-                    }
-                }));
+                let globalProperty = target[$forward$[0]];
+                try {
+                    Array.isArray(globalProperty) ? globalProperty.push(...args) : "function" == typeof globalProperty && globalProperty.apply(target, args);
+                } catch (e) {
+                    console.error(e);
+                }
             })(msgData1) : 8 === msgType && runStateHandlers(msgData1, msgData2);
         } else if (1 === msgType) {
-            ((self, initWebWorkerData) => {
-                Object.assign(webWorkerCtx, initWebWorkerData);
-                logWorker(`Loaded web worker, winId: ${webWorkerCtx.$winId$}${webWorkerCtx.$winId$ > 1 ? ", parentId: " + webWorkerCtx.$parentWinId$ : ""}`);
-                webWorkerCtx.$importScripts$ = importScripts.bind(self);
-                self.importScripts = void 0;
-                webWorkerCtx.$postMessage$ = postMessage.bind(self);
-                self.postMessage = (msg, targetOrigin) => logWorker(`postMessage(${JSON.stringify(msg)}, "${targetOrigin}"})`);
-                webWorkerCtx.$location$ = new WorkerLocation(initWebWorkerData.$url$);
-                ((self, windowMemberTypeInfo) => {
-                    self[WinIdKey] = webWorkerCtx.$winId$;
-                    self[InstanceIdKey] = 0;
-                    Object.keys(windowMemberTypeInfo).forEach((memberName => {
-                        self[memberName] || 2 !== windowMemberTypeInfo[memberName] || (self[memberName] = (...args) => callMethod(self, [ memberName ], args));
-                    }));
-                    self.requestAnimationFrame = cb => nextTick((() => cb(Date.now())), 9);
-                    self.cancelAnimationFrame = clearTimeout;
-                    Object.defineProperty(self, "location", {
-                        get: () => webWorkerCtx.$location$,
-                        set: href => webWorkerCtx.$location$.href = href + ""
-                    });
-                    self.document = constructInstance(9, 4);
-                    self.history = constructInstance(8, 1);
-                    self.localStorage = constructInstance(10, 2);
-                    self.sessionStorage = constructInstance(10, 3);
-                    self.Image = Image;
-                    navigator.sendBeacon = sendBeacon;
-                    self.self = self.window = self;
-                    if (1 === webWorkerCtx.$winId$) {
-                        self.parent = self.top = self;
-                    } else {
-                        self.parent = constructInstance(0, 0, webWorkerCtx.$parentWinId$);
-                        self.top = constructInstance(0, 0, 1);
-                    }
-                })(self, initWebWorkerData.$interfaces$[0][1]);
-                webWorkerCtx.$isInitialized$ = !0;
-            })(self, msgData1);
+            initWebWorker(self, msgData1);
             webWorkerCtx.$postMessage$([ 3 ]);
             nextTick((() => {
                 queuedEvents.length && logWorker(`Queued ready messages: ${queuedEvents.length}`);

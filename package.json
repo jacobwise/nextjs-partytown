@@ -9,7 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@builder.io/partytown": "^0.0.5",
+    "@builder.io/partytown": "^0.0.7",
     "copy-webpack-plugin": "^9.0.1",
     "next": "11.1.2",
     "react": "17.0.2",
